@@ -1,5 +1,7 @@
 # GitServe
+
 ### After some chat with AI
+
 Here's the list of things i want to ship:
 
 ### 1. Core Features
@@ -7,13 +9,11 @@ Here's the list of things i want to ship:
 - **Run Commands from Git Source:**
   - `gitserve run <branch_name>`:
     - Uses local `<branch_name>` if it exists.
-    - If not local, and `<branch_name>` has a configured upstream remote (e.g., `branch.branch_name.remote`), attempt to use that remote's version of `<branch_name>`.
-    - If no local branch and no configured upstream for that specific branch name, an error will occur (unless `--remote` is specified).
+    - If not local then try to checkout the branch
   - `gitserve run <branch_name> --remote <remote_name>`: Explicitly run `<branch_name>` from `<remote_name>`.
   - `gitserve run --commit <commit_sha>`: Run from a specific commit.
   - `gitserve run --tag <tag_name>`: Run from a specific tag.
   - `gitserve run --pr <github_pr_url>`: Run code from a GitHub Pull Request.
-  - `gitserve run --name <command_key>`: Execute a pre-defined command from `named_commands` in the config file, using the current Git context (default branch behavior or other source flags apply).
 - **Process Management:**
   - `-d, --detach`: Run the specified command in the background.
   - `list`: List all currently managed (running/detached) processes with ID, source, port, PID.
@@ -28,59 +28,67 @@ Here's the list of things i want to ship:
   - `-h, --help`: Display help manual for commands and subcommands.
   - `init`: Interactively create a `.gitserve.json` config file.
   - `-i, --interactive`: After cloning and running `pre_command`, open an interactive shell session within the temporary directory of the specified Git source.
+- **Named Commands:**
+  - `gitserve run --name dev_server` will run the sepcified things in the configuration.
 
-### 2. Config File Content (`.gitserve.toml`)
+### 2. Config File Content (`gitserve.yaml`)
 
-```toml
+```yaml
 # Single command or array of commands to run before EACH main command.
 # Think 'npm install', 'bundle install', etc.
-pre_command = [
-    "npm ci",
-    "npm run build:icons"
-]
+pre_command:
+  - npm ci
+  - npm run build:icons
 
 # The go-to command if I just type 'gitserve run <branch_name>'
 # and don't specify a named command.
-default_run_command = "npm run dev"
+default_run_command: npm run dev
 
 # Port gitserve tries first.
-default_port = 3000
+default_port: 3000
 
 # If default_port is taken, gitserve will try these in order.
-preferred_ports_list = [3001, 3002, 8080, 8081, 5000]
+preferred_ports_list:
+  - 3001
+  - 3002
+  - 8080
+  - 8081
+  - 5000
 
 # Handy: map certain branches to specific default ports.
 # 'gitserve run main' would try 4000 first.
-[branch_port_mapping]
-main = 4000
-develop = 4001
-staging = 4002
+branch_port_mapping:
+  main: 4000
+  develop: 4001
+  staging: 4002
 
 # Your saved "recipes" for running things.
-[named_commands.dev_server]
-description = "Spins up the frontend dev server."
-run_command = "npm run dev:frontend"
-pre_command = "npm install --prefix frontend"  # Command-specific pre-command
-env_vars = { NODE_ENV = "development", API_MOCK = "true" }
+named_commands:
+  dev_server:
+    description: Spins up the frontend dev server.
+    run_command: npm run dev:frontend
+    pre_command: npm install --prefix frontend # Command-specific pre-command
+    env_vars:
+      NODE_ENV: development
+      API_MOCK: true
 
-[named_commands.api_only]
-description = "Runs just the backend API."
-run_command = "npm run start:api"
-default_port = 3005  # Command-specific default port
-pre_command = [
-    "npm install --prefix backend",
-    "npm run migrate:dev --prefix backend"
-]
+  api_only:
+    description: Runs just the backend API.
+    run_command: npm run start:api
+    default_port: 3005 # Command-specific default port
+    pre_command:
+      - npm install --prefix backend
+      - npm run migrate:dev --prefix backend
 
-[named_commands.test_suite]
-description = "Runs all automated tests."
-run_command = "npm test"
+  test_suite:
+    description: Runs all automated tests.
+    run_command: npm test
 
 # Environment variables to apply to ALL commands gitserve runs.
 # Not sure about the use case of this still let's have it.
-[global_env_vars]
-GITSERVE_MANAGED = "true"
-LOG_LEVEL = "debug"
+global_env_vars:
+  GITSERVE_MANAGED: true
+  LOG_LEVEL: debug
 ```
 
 ### 3. Architecture for Complex Features
@@ -107,7 +115,6 @@ LOG_LEVEL = "debug"
 - **Instance Updates:** `gitserve update <id>` to fetch latest for the ref and restart the process.
 - **Enhanced State:** Persist more detailed state about each instance for better management and re-use.
 
-
 #### legacy things that i thought initially
 
 ## Things to do
@@ -129,4 +136,3 @@ LOG_LEVEL = "debug"
 Config file contents
 
 run_command, pre_command, default_port, named commands, which can also have set of commands too.
-
