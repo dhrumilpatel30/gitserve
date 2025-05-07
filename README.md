@@ -103,7 +103,6 @@ Here's the plan:
     "LOG_LEVEL": "debug"
   }
 }
-}
 ```
 
 ### 3. Architecture for Complex Features
