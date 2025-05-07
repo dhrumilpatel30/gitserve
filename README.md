@@ -1,6 +1,5 @@
-### GitServe
-## After some chat with AI
-
+# GitServe
+### After some chat with AI
 Here's the list of things i want to ship:
 
 ### 1. Core Features
