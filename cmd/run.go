@@ -1,14 +1,8 @@
 package cmd
 
 import (
-	"fmt"
-	"gitserve/internal/config"
-	"gitserve/internal/source"
-
 	"github.com/spf13/cobra"
 )
-
-var runOptions config.RunOptions
 
 var runCmd = &cobra.Command{
 	Use:   "run [source]",
@@ -29,18 +23,7 @@ Examples:
   gitserve run --port 3000 develop         # Run on port 3000 from develop branch
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		src, err := determineSource(args, runOptions)
-		if err != nil {
-			return err
-		}
-
-		if err := source.ValidateSource(src); err != nil {
-			return fmt.Errorf("invalid source configuration: %w", err)
-		}
-
-		updateRunOptions(&runOptions, src)
-
-		return executeRun(src, runOptions)
+		return nil
 	},
 }
 
@@ -56,68 +39,4 @@ func init() {
 	runCmd.Flags().StringVarP(&runOptions.TagName, "tag", "t", "", "Tag name")
 	runCmd.Flags().StringVarP(&runOptions.NamedCommand, "name", "n", "", "Named command")
 	runCmd.Flags().StringVarP(&runOptions.RemoteName, "remote", "R", "", "Remote name")
-}
-
-// determineSource figures out what source to use based on arguments and flags
-func determineSource(args []string, opts config.RunOptions) (*source.Source, error) {
-	// If explicit flags are used, they take precedence
-	if opts.CommitHash != "" {
-		return &source.Source{
-			Type:  source.Commit,
-			Value: opts.CommitHash,
-		}, nil
-	}
-
-	if opts.TagName != "" {
-		return &source.Source{
-			Type:  source.Tag,
-			Value: opts.TagName,
-		}, nil
-	}
-
-	if opts.PRLink != "" {
-		return &source.Source{
-			Type:  source.PullRequest,
-			Value: opts.PRLink,
-		}, nil
-	}
-
-	if opts.BranchName != "" {
-		return &source.Source{
-			Type:  source.Branch,
-			Value: opts.BranchName,
-		}, nil
-	}
-
-	if len(args) > 0 {
-		return &source.Source{
-			Type:  source.Branch,
-			Value: args[0],
-		}, nil
-	}
-
-	return nil, fmt.Errorf("no source specified")
-}
-
-// updateRunOptions updates the run options based on the detected source
-func updateRunOptions(opts *config.RunOptions, src *source.Source) {
-	switch src.Type {
-	case source.Branch:
-		opts.BranchName = src.Value
-	case source.PullRequest:
-		opts.PRLink = src.Value
-	case source.Commit:
-		opts.CommitHash = src.Value
-	case source.Tag:
-		opts.TagName = src.Value
-	}
-	if src.Remote != "" {
-		opts.RemoteName = src.Remote
-	}
-}
-
-// executeRun performs the actual run operation
-func executeRun(src *source.Source, opts config.RunOptions) error {
-	fmt.Println(src)
-	return nil
 }
