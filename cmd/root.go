@@ -37,35 +37,3 @@ func Execute() {
 		os.Exit(1)
 	}
 }
-
-// init() runs before main() and is used to set up flags and configurations.
-func init() {
-	// Call a function to initialize configuration loading (using Viper).
-	// This function will likely live in internal/config but might be triggered here.
-	// cobra.OnInitialize(initConfig)
-
-	// Example: Define global persistent flags here if needed
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is .gitserve.json)")
-}
-
-/*
-// initConfig reads in config file and ENV variables if set.
-// This function's logic will primarily be implemented in internal/config
-// and called from the init() function or using cobra.OnInitialize().
-func initConfig() {
-    // Example Viper setup (details TBD in internal/config/config.go)
-    // viper.SetConfigName(".gitserve") // Config file name without extension
-    // viper.SetConfigType("json")     // Specify JSON type
-    // viper.AddConfigPath(".")        // Look for config in the current directory
-    // viper.AddConfigPath("$HOME/.gitserve") // Optionally look in home directory
-    // viper.AutomaticEnv()            // Read in environment variables that match
-
-    // If a config file is found, read it in.
-    // if err := viper.ReadInConfig(); err == nil {
-    //  fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
-    // } else {
-    //  // Handle cases where config file is not found, maybe it's okay?
-    //  // Or only error out if a specific config file flag was passed but not found.
-    // }
-}
-*/
