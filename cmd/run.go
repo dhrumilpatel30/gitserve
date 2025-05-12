@@ -6,12 +6,21 @@ import (
 	"gitserve/internal/instance"
 	"gitserve/internal/models"
 	"gitserve/internal/runner"
+	"gitserve/internal/storage"
 	"gitserve/internal/validation"
 	"gitserve/internal/workspace"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
+)
+
+// ANSI color codes (can be moved to a shared package later)
+const (
+	colorResetRun = "\033[0m"
+	colorGreenRun = "\033[32m"
+	colorBoldRun  = "\033[1m"
 )
 
 var runOptions struct {
@@ -76,6 +85,13 @@ Examples:
 		// Instance service
 		instanceService := instance.NewService()
 
+		// Storage service for instances
+		storeDataPath := filepath.Join(homeDir, ".gitserve", "store")
+		instanceStore, err := storage.NewJSONInstanceStore(storeDataPath)
+		if err != nil {
+			return fmt.Errorf("failed to initialize instance store: %w", err)
+		}
+
 		// Create the runner service
 		runnerService := runner.NewService(
 			validationService,
@@ -84,31 +100,57 @@ Examples:
 			instanceService,
 		)
 
-		// Run the command
-		instance, err := runnerService.Run(request)
+		// Run the command (prepares the instance)
+		instanceModel, err := runnerService.Run(request) // instanceModel is *models.Instance
 		if err != nil {
 			return fmt.Errorf("failed to run command: %w", err)
 		}
 
-		fmt.Printf("Started instance %s for branch %s\n", instance.ID, instance.BranchName)
+		fmt.Printf("Instance %s%s%s prepared for branch %s%s%s (Path: %s)\n",
+			colorBoldRun, instanceModel.ID, colorResetRun,
+			colorBoldRun, instanceModel.BranchName, colorResetRun,
+			instanceModel.Path)
 
 		// Handle based on detached mode
 		if runOptions.IsDetached {
 			// In detached mode, start the process in background
-			if err := instanceService.StartDetachedProcess(instance); err != nil {
+			if err := instanceService.StartDetachedProcess(instanceModel); err != nil { // This updates instanceModel.PID, Status
 				return fmt.Errorf("failed to start detached process: %w", err)
 			}
-			fmt.Println("Process is running in detached mode. Use 'gitserve list' to view instances.")
+			fmt.Printf("%sProcess is running in detached mode.%s\n", colorGreenRun, colorResetRun)
+
+			// Add to instance store
+			storageInst := storage.Instance{
+				ID:         instanceModel.ID,
+				Name:       fmt.Sprintf("%s-%s", instanceModel.BranchName, instanceModel.ID[:8]), // Generate a user-friendly name
+				PID:        instanceModel.ProcessID,
+				Port:       instanceModel.Port,                                                             // Ensure Port is correctly populated if used
+				Path:       instanceModel.Path,                                                             // This now comes from models.Instance
+				Status:     instanceModel.Status,                                                           // Should be "running"
+				StartTime:  time.Now().UTC(),                                                               // Record start time
+				LogPath:    filepath.Join(instanceModel.Path, fmt.Sprintf("%s.out.log", instanceModel.ID)), // Base log path, actual files are .out.log and .err.log
+				GitServeID: "",                                                                             // Placeholder or version info
+				// Consider adding BranchName explicitly to storage.Instance if needed for querying
+			}
+
+			if err := instanceStore.AddInstance(storageInst); err != nil {
+				// Log this error, but maybe don't fail the whole run command?
+				// Or decide if this is critical. For now, let's report it.
+				return fmt.Errorf("failed to save instance to store (process is running): %w", err)
+			}
+			fmt.Printf("%sInstance %s%s%s (PGID: %s%d%s) details saved. Use 'gitserve list'.%s\n",
+				colorGreenRun,
+				colorBoldRun, storageInst.ID, colorResetRun,
+				colorBoldRun, storageInst.PID, colorResetRun,
+				colorResetRun)
+
 			return nil
 		} else {
 			// In non-detached mode, run the process directly
-			fmt.Println("Process is running. Press Ctrl+C to stop.")
-			if err := instanceService.RunProcess(instance); err != nil {
+			fmt.Printf("%sProcess is running in foreground. Press Ctrl+C to stop.%s\n", colorYellow, colorResetRun) // Assuming colorYellow is defined or add it
+			if err := instanceService.RunProcess(instanceModel); err != nil {
 				// Just log the error but don't fail - process exiting with error code is expected
-				_, err := fmt.Fprintf(os.Stderr, "Process exited with error: %v\n", err)
-				if err != nil {
-					return err
-				}
+				_, _ = fmt.Fprintf(os.Stderr, "%sProcess exited with error: %v%s\n", colorRed, err, colorResetRun) // Assuming colorRed is defined
 			}
 			return nil
 		}

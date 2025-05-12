@@ -13,6 +13,7 @@ type Instance struct {
 	ID          string
 	BranchName  string
 	WorkspaceID string
+	Path        string // Filesystem path of the cloned repository in the workspace
 	ProcessID   int
 	Port        int
 	Status      string
