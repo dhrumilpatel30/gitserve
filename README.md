@@ -1,6 +1,6 @@
 # GitServe
 
-### After some chat with AI
+##### My vibe coded project, serious though. Readme Written After some chat with AI
 
 Here's the list of things i want to ship:
 
