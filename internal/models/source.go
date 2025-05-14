@@ -30,6 +30,32 @@ func (gst GitSourceType) String() string {
 	}
 }
 
+// PRProviderType identifies the Git hosting provider for a Pull Request.
+type PRProviderType int
+
+const (
+	UndefinedProvider PRProviderType = iota
+	GitHubProvider
+	// GitLabProvider // Example for future extension
+	// BitbucketProvider // Example for future extension
+)
+
+// String provides a string representation for PRProviderType.
+func (ppt PRProviderType) String() string {
+	switch ppt {
+	case GitHubProvider:
+		return "GitHub"
+	// case GitLabProvider:
+	// 	return "GitLab"
+	// case BitbucketProvider:
+	// 	return "Bitbucket"
+	case UndefinedProvider:
+		return "UndefinedProvider"
+	default:
+		return "UnknownProvider"
+	}
+}
+
 // GitSource specifies the details of the Git entity to be checked out.
 // This structure will be populated based on CLI arguments.
 type GitSource struct {
@@ -47,6 +73,9 @@ type GitSource struct {
 	CommitHash string // Specific commit SHA to checkout.
 	PRNumber   int    // Pull Request number (e.g., for GitHub).
 	RemoteName string // Optional: name of the remote (e.g., "origin", "upstream"). Defaults to "origin".
+
+	// PRProvider indicates the source control provider for PRSource type.
+	PRProvider PRProviderType
 
 	// For PRs, these might be populated after fetching PR details from an API:
 	PRApiUrl      string // Full URL to the PR (e.g. GitHub PR URL provided by user)

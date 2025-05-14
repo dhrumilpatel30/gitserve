@@ -7,13 +7,12 @@ import (
 	"gitserve/internal/logger"
 	"gitserve/internal/models"
 	"gitserve/internal/runner"
+	"gitserve/internal/sourceresolver"
 	"gitserve/internal/storage"
 	"gitserve/internal/validation"
 	"gitserve/internal/workspace"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -51,50 +50,20 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		log := logger.NewService(logger.LogLevelInfo)
 
-		var gitSource models.GitSource
-		gitSource.RepoPath = "."
-		if runOptions.RemoteName != "" {
-			gitSource.RemoteName = runOptions.RemoteName
-		} else {
-			gitSource.RemoteName = "origin"
+		cliOpts := sourceresolver.CLIOptions{
+			Args:       args,
+			PRLink:     runOptions.PRLink,
+			BranchName: runOptions.BranchName,
+			CommitHash: runOptions.CommitHash,
+			TagName:    runOptions.TagName,
+			RemoteName: runOptions.RemoteName,
 		}
 
-		if runOptions.PRLink != "" {
-			gitSource.Type = models.PRSource
-			gitSource.PRApiUrl = runOptions.PRLink
-			parsedURL, err := url.Parse(runOptions.PRLink)
-			if err != nil {
-				return fmt.Errorf("invalid PR URL %s: %w", runOptions.PRLink, err)
-			}
-			pathParts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
-			if parsedURL.Hostname() == "github.com" && len(pathParts) == 4 && pathParts[2] == "pull" {
-				owner := pathParts[0]
-				repo := pathParts[1]
-				prNumStr := pathParts[3]
-				prNum, convErr := fmt.Sscan(prNumStr, &gitSource.PRNumber)
-				if convErr != nil || prNum == 0 {
-					return fmt.Errorf("could not parse PR number from URL %s: %v", runOptions.PRLink, convErr)
-				}
-				gitSource.RepoPath = fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
-			} else {
-				return fmt.Errorf("unsupported PR URL format or host: %s. Only GitHub PRs are currently supported", runOptions.PRLink)
-			}
-		} else if runOptions.CommitHash != "" {
-			gitSource.Type = models.CommitSource
-			gitSource.CommitHash = runOptions.CommitHash
-		} else if runOptions.TagName != "" {
-			gitSource.Type = models.TagSource
-			gitSource.RefName = runOptions.TagName
-		} else if runOptions.BranchName != "" {
-			gitSource.Type = models.BranchSource
-			gitSource.RefName = runOptions.BranchName
-		} else if len(args) > 0 {
-			gitSource.Type = models.BranchSource
-			gitSource.RefName = args[0]
-		} else {
-			gitSource.Type = models.BranchSource
-			gitSource.RefName = "main"
-			log.Warning("No specific source provided, defaulting to branch 'main'.")
+		resolverService := sourceresolver.NewService(log)
+		gitSource, err := resolverService.Resolve(cliOpts)
+		if err != nil {
+			log.Error("Failed to resolve git source: %v", err)
+			return err
 		}
 
 		request := &models.RunRequest{
@@ -131,12 +100,23 @@ Examples:
 			instanceIDForError := "unknown"
 			branchNameForError := "unknown"
 			statusForError := "unknown"
+
 			if finalInstanceModel != nil {
 				instanceIDForError = finalInstanceModel.ID
 				branchNameForError = finalInstanceModel.BranchName
 				statusForError = finalInstanceModel.Status
+			} else {
+				switch gitSource.Type {
+				case models.BranchSource, models.TagSource:
+					branchNameForError = gitSource.RefName
+				case models.CommitSource:
+					branchNameForError = gitSource.CommitHash
+				case models.PRSource:
+					branchNameForError = fmt.Sprintf("pr-%d", gitSource.PRNumber)
+				}
 			}
-			log.Error("Run failed for instance %s (Ref: %s, Status: %s): %v",
+
+			log.Error("Run failed for instance %s (Source Ref: %s, Status: %s): %v",
 				instanceIDForError, branchNameForError, statusForError, err)
 			return err
 		}
