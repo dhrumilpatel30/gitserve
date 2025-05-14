@@ -4,23 +4,18 @@ import (
 	"fmt"
 	"gitserve/internal/git"
 	"gitserve/internal/instance"
+	"gitserve/internal/logger"
 	"gitserve/internal/models"
 	"gitserve/internal/runner"
 	"gitserve/internal/storage"
 	"gitserve/internal/validation"
 	"gitserve/internal/workspace"
+	"net/url"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/spf13/cobra"
-)
-
-// ANSI color codes (can be moved to a shared package later)
-const (
-	colorResetRun = "\033[0m"
-	colorGreenRun = "\033[32m"
-	colorBoldRun  = "\033[1m"
 )
 
 var runOptions struct {
@@ -54,106 +49,109 @@ Examples:
   gitserve run --port 3000 develop         # Run on port 3000 from develop branch
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Determine the branch name
-		branchName := runOptions.BranchName
-		// If branch name flag not set but positional arg exists, use that
-		if branchName == "" && len(args) > 0 {
-			branchName = args[0]
+		log := logger.NewService(logger.LogLevelInfo)
+
+		var gitSource models.GitSource
+		gitSource.RepoPath = "."
+		if runOptions.RemoteName != "" {
+			gitSource.RemoteName = runOptions.RemoteName
+		} else {
+			gitSource.RemoteName = "origin"
 		}
 
-		// Create the run request
+		if runOptions.PRLink != "" {
+			gitSource.Type = models.PRSource
+			gitSource.PRApiUrl = runOptions.PRLink
+			parsedURL, err := url.Parse(runOptions.PRLink)
+			if err != nil {
+				return fmt.Errorf("invalid PR URL %s: %w", runOptions.PRLink, err)
+			}
+			pathParts := strings.Split(strings.Trim(parsedURL.Path, "/"), "/")
+			if parsedURL.Hostname() == "github.com" && len(pathParts) == 4 && pathParts[2] == "pull" {
+				owner := pathParts[0]
+				repo := pathParts[1]
+				prNumStr := pathParts[3]
+				prNum, convErr := fmt.Sscan(prNumStr, &gitSource.PRNumber)
+				if convErr != nil || prNum == 0 {
+					return fmt.Errorf("could not parse PR number from URL %s: %v", runOptions.PRLink, convErr)
+				}
+				gitSource.RepoPath = fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
+			} else {
+				return fmt.Errorf("unsupported PR URL format or host: %s. Only GitHub PRs are currently supported", runOptions.PRLink)
+			}
+		} else if runOptions.CommitHash != "" {
+			gitSource.Type = models.CommitSource
+			gitSource.CommitHash = runOptions.CommitHash
+		} else if runOptions.TagName != "" {
+			gitSource.Type = models.TagSource
+			gitSource.RefName = runOptions.TagName
+		} else if runOptions.BranchName != "" {
+			gitSource.Type = models.BranchSource
+			gitSource.RefName = runOptions.BranchName
+		} else if len(args) > 0 {
+			gitSource.Type = models.BranchSource
+			gitSource.RefName = args[0]
+		} else {
+			gitSource.Type = models.BranchSource
+			gitSource.RefName = "main"
+			log.Warning("No specific source provided, defaulting to branch 'main'.")
+		}
+
 		request := &models.RunRequest{
-			BranchName: branchName,
-			RepoPath:   ".", // Default to current directory
-			Detached:   runOptions.IsDetached,
-			Command:    runOptions.CommandToRun,
+			Source:   gitSource,
+			Detached: runOptions.IsDetached,
+			Command:  runOptions.CommandToRun,
 		}
 
-		// Initialize services
 		validationService := validation.NewService()
-		gitService := git.NewService()
-
-		// Create a temp directory for workspaces
+		gitService := git.NewService(log)
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("failed to get home directory: %w", err)
 		}
-
 		workspacesDir := filepath.Join(homeDir, ".gitserve", "workspaces")
 		workspaceService := workspace.NewService(workspacesDir)
-
-		// Instance service
 		instanceService := instance.NewService()
-
-		// Storage service for instances
 		storeDataPath := filepath.Join(homeDir, ".gitserve", "store")
 		instanceStore, err := storage.NewJSONInstanceStore(storeDataPath)
 		if err != nil {
 			return fmt.Errorf("failed to initialize instance store: %w", err)
 		}
-
-		// Create the runner service
 		runnerService := runner.NewService(
 			validationService,
 			gitService,
 			workspaceService,
 			instanceService,
+			instanceStore,
+			log,
 		)
 
-		// Run the command (prepares the instance)
-		instanceModel, err := runnerService.Run(request) // instanceModel is *models.Instance
+		finalInstanceModel, err := runnerService.Run(request)
 		if err != nil {
-			return fmt.Errorf("failed to run command: %w", err)
+			instanceIDForError := "unknown"
+			branchNameForError := "unknown"
+			statusForError := "unknown"
+			if finalInstanceModel != nil {
+				instanceIDForError = finalInstanceModel.ID
+				branchNameForError = finalInstanceModel.BranchName
+				statusForError = finalInstanceModel.Status
+			}
+			log.Error("Run failed for instance %s (Ref: %s, Status: %s): %v",
+				instanceIDForError, branchNameForError, statusForError, err)
+			return err
 		}
 
-		fmt.Printf("Instance %s%s%s prepared for branch %s%s%s (Path: %s)\n",
-			colorBoldRun, instanceModel.ID, colorResetRun,
-			colorBoldRun, instanceModel.BranchName, colorResetRun,
-			instanceModel.Path)
-
-		// Handle based on detached mode
-		if runOptions.IsDetached {
-			// In detached mode, start the process in background
-			if err := instanceService.StartDetachedProcess(instanceModel); err != nil { // This updates instanceModel.PID, Status
-				return fmt.Errorf("failed to start detached process: %w", err)
-			}
-			fmt.Printf("%sProcess is running in detached mode.%s\n", colorGreenRun, colorResetRun)
-
-			// Add to instance store
-			storageInst := storage.Instance{
-				ID:         instanceModel.ID,
-				Name:       fmt.Sprintf("%s-%s", instanceModel.BranchName, instanceModel.ID[:8]), // Generate a user-friendly name
-				PID:        instanceModel.ProcessID,
-				Port:       instanceModel.Port,                                                             // Ensure Port is correctly populated if used
-				Path:       instanceModel.Path,                                                             // This now comes from models.Instance
-				Status:     instanceModel.Status,                                                           // Should be "running"
-				StartTime:  time.Now().UTC(),                                                               // Record start time
-				LogPath:    filepath.Join(instanceModel.Path, fmt.Sprintf("%s.out.log", instanceModel.ID)), // Base log path, actual files are .out.log and .err.log
-				GitServeID: "",                                                                             // Placeholder or version info
-				// Consider adding BranchName explicitly to storage.Instance if needed for querying
-			}
-
-			if err := instanceStore.AddInstance(storageInst); err != nil {
-				// Log this error, but maybe don't fail the whole run command?
-				// Or decide if this is critical. For now, let's report it.
-				return fmt.Errorf("failed to save instance to store (process is running): %w", err)
-			}
-			fmt.Printf("%sInstance %s%s%s (PGID: %s%d%s) details saved. Use 'gitserve list'.%s\n",
-				colorGreenRun,
-				colorBoldRun, storageInst.ID, colorResetRun,
-				colorBoldRun, storageInst.PID, colorResetRun,
-				colorResetRun)
-
-			return nil
+		if request.Detached {
+			log.Info("Instance %s (Ref: %s, PID: %d) is running detached and saved.",
+				finalInstanceModel.ID, finalInstanceModel.BranchName, finalInstanceModel.ProcessID)
+			log.Info("Workspace: %s. Use 'gitserve list' and 'gitserve logs %s'.",
+				finalInstanceModel.Path, finalInstanceModel.ID)
 		} else {
-			// In non-detached mode, run the process directly
-			fmt.Printf("%sProcess is running in foreground. Press Ctrl+C to stop.%s\n", colorYellow, colorResetRun) // Assuming colorYellow is defined or add it
-			if err := instanceService.RunProcess(instanceModel); err != nil {
-				// Just log the error but don't fail - process exiting with error code is expected
-				_, _ = fmt.Fprintf(os.Stderr, "%sProcess exited with error: %v%s\n", colorRed, err, colorResetRun) // Assuming colorRed is defined
-			}
-			return nil
+			log.Info("Foreground process for instance %s (Ref: %s) completed with status: %s.",
+				finalInstanceModel.ID, finalInstanceModel.BranchName, finalInstanceModel.Status)
+			log.Info("Workspace %s cleaned up.", finalInstanceModel.Path)
 		}
+		return nil
 	},
 }
 

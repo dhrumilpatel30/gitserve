@@ -2,10 +2,9 @@ package models
 
 // RunRequest represents the parameters for running a Git branch
 type RunRequest struct {
-	BranchName string
-	RepoPath   string
-	Detached   bool
-	Command    string // Command to run
+	Source   GitSource
+	Detached bool
+	Command  string // Command to run
 }
 
 // Instance represents a running instance of a Git branch
